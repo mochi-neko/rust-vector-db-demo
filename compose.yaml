@@ -1,0 +1,26 @@
+services:
+  rust:
+    build:
+      context: .
+      dockerfile: docker/rust/Dockerfile
+    tty: true
+    volumes:
+      - .:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [ "gpu", "utility", "compute" ]
+              driver: nvidia
+              count: 1
+  qdrant:
+    build:
+      context: .
+      dockerfile: docker/qdrant/Dockerfile
+    volumes:
+      - .db:/qdrant/storage
+    ports:
+      - 6334:6334
+
+volumes:
+  rust-target:
