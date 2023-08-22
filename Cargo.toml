@@ -10,5 +10,8 @@ description = "A demonstration to use vector database for text on Rust in Docker
 
 [dependencies]
 anyhow = "1.0.72"
+chrono = "0.4.26"
 qdrant-client = "1.4.0"
 rust-bert = "0.21.0"
+tokio = { version = "1.32.0", features = ["rt-multi-thread"] }
+uuid = "1.4.1"
