@@ -13,14 +13,19 @@ use rust_bert::pipelines::sentence_embeddings::{
     SentenceEmbeddingsBuilder, SentenceEmbeddingsModel,
     SentenceEmbeddingsModelType,
 };
+use tokio::task;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup sentence embeddings model
-    let model = SentenceEmbeddingsBuilder::remote(
-        SentenceEmbeddingsModelType::AllMiniLmL6V2,
-    )
-    .create_model()?;
+    // NOTE: Run blocking operation in task::spawn_blocking
+    let model = task::spawn_blocking(move || {
+        SentenceEmbeddingsBuilder::remote(
+            SentenceEmbeddingsModelType::AllMiniLmL6V2,
+        )
+        .create_model()
+    })
+    .await??;
 
     // Get embedding dimension
     let dimension = model.get_embedding_dim()? as u64;
@@ -32,8 +37,11 @@ async fn main() -> Result<()> {
     // Create collection
     let collection_name = "collection_name".to_string();
     qdrant
+        .delete_collection(collection_name.clone())
+        .await?;
+    qdrant
         .create_collection(&CreateCollection {
-            collection_name,
+            collection_name: collection_name.clone(),
             vectors_config: Some(VectorsConfig {
                 config: Some(Config::Params(VectorParams {
                     size: dimension,
@@ -43,6 +51,65 @@ async fn main() -> Result<()> {
             }),
             ..Default::default()
         })
+        .await?;
+
+    // Store corpus in Vector DB
+    let corpus = vec![
+        "A man is eating food.",
+        "A man is eating a piece of bread.",
+        "The girl is carrying a baby.",
+        "A man is riding a horse.",
+        "A woman is playing violin.",
+        "Two men pushed carts through the woods.",
+        "A man is riding a white horse on an enclosed ground.",
+        "A monkey is playing drums.",
+        "A cheetah is running behind its prey.",
+    ];
+    for sentence in corpus {
+        upsert(
+            &qdrant,
+            &collection_name,
+            &model,
+            &sentence.to_string(),
+        )
+        .await?;
+        println!("Upserted: {}", sentence)
+    }
+
+    // Search for similar sentences
+    let queries = vec![
+        "A man is eating pasta.",
+        "Someone in a gorilla costume is playing a set of drums.",
+        "A cheetah chases prey on across a field.",
+    ];
+    for query in queries {
+        let result = search(
+            &qdrant,
+            &collection_name,
+            &model,
+            query.to_string(),
+            5,
+            None,
+        )
+        .await?;
+
+        println!("Query: {}", query);
+        for point in result {
+            println!(
+                "Score: {}, Text: {}",
+                point.score,
+                point
+                    .payload
+                    .get("text")
+                    .unwrap()
+            );
+        }
+        println!();
+    }
+
+    // Delete collection
+    qdrant
+        .delete_collection(collection_name.clone())
         .await?;
 
     Ok(())
@@ -57,11 +124,11 @@ fn embed(
 
 async fn upsert(
     client: &QdrantClient,
-    collection_name: &String,
+    collection_name: &str,
     model: &SentenceEmbeddingsModel,
     text: &String,
 ) -> Result<()> {
-    let embedding = embed(&model, &text)?;
+    let embedding = embed(model, text)?;
     let mut points = Vec::new();
     let mut payload: HashMap<String, Value> = HashMap::new();
     payload.insert(
@@ -87,7 +154,11 @@ async fn upsert(
     }
 
     client
-        .upsert_points(collection_name.clone(), points, None)
+        .upsert_points(
+            collection_name.to_string(),
+            points,
+            None,
+        )
         .await?;
 
     Ok(())
@@ -95,7 +166,7 @@ async fn upsert(
 
 async fn search(
     client: &QdrantClient,
-    collection_name: &String,
+    collection_name: &str,
     model: &SentenceEmbeddingsModel,
     query: String,
     count_limit: u64,
@@ -106,7 +177,7 @@ async fn search(
 
     let result = client
         .search_points(&SearchPoints {
-            collection_name: collection_name.clone(),
+            collection_name: collection_name.to_string(),
             vector,
             limit: count_limit,
             filter,
