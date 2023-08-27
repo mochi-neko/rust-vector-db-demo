@@ -15,7 +15,6 @@ use rust_bert::pipelines::sentence_embeddings::{
 };
 use tokio::task;
 
-#[tracing::instrument(name = "main", err)]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup sentence embeddings model
